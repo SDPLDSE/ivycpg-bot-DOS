@@ -7,7 +7,7 @@ import requests
 import logging
 import sys
 import os
-import pytz
+import subprocess
 from datetime import datetime
 from playwright.async_api import async_playwright
 
@@ -24,15 +24,6 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 SCREENSHOT_PATH    = "daily_screenshot.png"
 
-# IST Timezone using pytz (rock solid on Linux servers)
-IST = pytz.timezone("Asia/Kolkata")
-
-# Crop: skip sidebar and top header
-CROP_X      = 215
-CROP_Y      = 155
-CROP_WIDTH  = 1065
-CROP_HEIGHT = 620
-
 # ---------------------------------------------
 # LOGGING
 # ---------------------------------------------
@@ -44,14 +35,47 @@ console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(formatter)
 log.addHandler(console_handler)
 
+# Crop: skip sidebar and top header
+CROP_X      = 215
+CROP_Y      = 155
+CROP_WIDTH  = 1065
+CROP_HEIGHT = 620
+
 # ---------------------------------------------
 # TELEGRAM
 # ---------------------------------------------
 
+def get_ist_time():
+    # Method 1: Use TZ environment variable approach
+    os.environ["TZ"] = "Asia/Kolkata"
+    try:
+        import time
+        time.tzset()
+    except Exception:
+        pass
+
+    # Method 2: Use date shell command as backup
+    try:
+        result = subprocess.run(
+            ["date", "+%d %b %Y %I:%M %p IST"],
+            env={**os.environ, "TZ": "Asia/Kolkata"},
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception as e:
+        log.error(f"Shell date failed: {e}")
+
+    # Method 3: Manual UTC+5:30 offset calculation
+    utc_now = datetime.utcnow()
+    from datetime import timedelta
+    ist_now = utc_now + timedelta(hours=5, minutes=30)
+    return ist_now.strftime("%d %b %Y %I:%M %p IST")
+
 def send_to_telegram():
-    now     = datetime.now(IST).strftime("%d %b %Y %I:%M %p IST")
-    caption = f"Daily Order Summary\n{now}"
-    log.info(f"Caption will be: {caption}")
+    ist_time = get_ist_time()
+    caption  = f"Daily Order Summary\n{ist_time}"
+    log.info(f"=== CAPTION: {caption} ===")
     try:
         with open(SCREENSHOT_PATH, "rb") as img:
             resp = requests.post(
@@ -122,7 +146,6 @@ async def run_automation():
         page    = await context.new_page()
 
         try:
-            # ── 1. Login ──────────────────────────────────────
             log.info(f"Opening: {SITE_URL}")
             await page.goto(SITE_URL, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(2000)
@@ -137,12 +160,10 @@ async def run_automation():
             await page.wait_for_timeout(4000)
             log.info(f"Logged in. URL: {page.url}")
 
-            # ── 2. Navigate via sidebar ───────────────────────
             await js_click_title(page, "Transactions")
             await js_click_title(page, "Receivables")
             await js_click_title(page, "Orders")
 
-            # ── 3. Click Daily Order Summary ──────────────────
             log.info("Clicking: Daily Order Summary")
             await page.evaluate("""
                 () => {
@@ -153,13 +174,11 @@ async def run_automation():
                 }
             """)
 
-            # ── 4. Find frame with Search button ─────────────
             log.info("Searching all frames for Search button...")
             target_frame = await find_search_frame(page)
             if target_frame is None:
                 raise Exception("Could not find fnLoadSerach in any frame.")
 
-            # ── 5. Click Search ───────────────────────────────
             log.info("Clicking Search button...")
             await target_frame.evaluate("""
                 () => {
@@ -171,7 +190,6 @@ async def run_automation():
             """)
             log.info("Search clicked.")
 
-            # ── 6. Wait for table rows ────────────────────────
             log.info("Waiting for results...")
             await page.wait_for_load_state("networkidle", timeout=15000)
 
@@ -188,16 +206,10 @@ async def run_automation():
 
             await page.wait_for_timeout(2000)
 
-            # ── 7. Cropped screenshot ─────────────────────────
             log.info("Taking screenshot...")
             await page.screenshot(
                 path=SCREENSHOT_PATH,
-                clip={
-                    "x":      CROP_X,
-                    "y":      CROP_Y,
-                    "width":  CROP_WIDTH,
-                    "height": CROP_HEIGHT
-                }
+                clip={"x": CROP_X, "y": CROP_Y, "width": CROP_WIDTH, "height": CROP_HEIGHT}
             )
             log.info("Screenshot saved.")
 
@@ -205,7 +217,6 @@ async def run_automation():
             log.error(f"Automation error: {e}")
             try:
                 await page.screenshot(path=SCREENSHOT_PATH)
-                log.info("Error screenshot saved.")
             except Exception:
                 pass
         finally:
