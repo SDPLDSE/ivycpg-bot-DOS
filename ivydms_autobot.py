@@ -7,7 +7,7 @@ import requests
 import logging
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from playwright.async_api import async_playwright
 
 # ---------------------------------------------
@@ -22,6 +22,9 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 SCREENSHOT_PATH    = "daily_screenshot.png"
+
+# IST Timezone
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # Crop: skip sidebar (210px) and top header (155px)
 CROP_X      = 215
@@ -45,7 +48,7 @@ log.addHandler(console_handler)
 # ---------------------------------------------
 
 def send_to_telegram():
-    now     = datetime.now().strftime("%d %b %Y %I:%M %p")
+    now     = datetime.now(IST).strftime("%d %b %Y %I:%M %p IST")
     caption = f"Daily Order Summary\n{now}"
     try:
         with open(SCREENSHOT_PATH, "rb") as img:
@@ -102,7 +105,6 @@ async def run_automation():
 
     async with async_playwright() as p:
 
-        # ✅ headless=True — required for GitHub Actions (no display)
         browser = await p.chromium.launch(
             headless=True,
             args=[
@@ -185,7 +187,7 @@ async def run_automation():
             await page.wait_for_timeout(2000)
 
             # ── 7. Cropped screenshot ─────────────────────────
-            log.info(f"Taking screenshot...")
+            log.info("Taking screenshot...")
             await page.screenshot(
                 path=SCREENSHOT_PATH,
                 clip={
