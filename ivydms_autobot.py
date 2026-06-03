@@ -8,6 +8,7 @@ import logging
 import sys
 import os
 from datetime import datetime, timezone, timedelta
+IST = timezone(timedelta(hours=5, minutes=30))
 from playwright.async_api import async_playwright
 
 # ---------------------------------------------
