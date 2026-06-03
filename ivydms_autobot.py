@@ -8,7 +8,7 @@ import logging
 import sys
 import os
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
 
 # ---------------------------------------------
@@ -68,6 +68,8 @@ def get_ist_time():
 
     # Method 3: Manual UTC+5:30 offset calculation
     utc_now = datetime.utcnow()
+    ist_now = utc_now + timedelta(hours=5, minutes=30)
+    now = ist_now.strftime("%d %b %Y %I:%M %p IST")
     from datetime import timedelta
     ist_now = utc_now + timedelta(hours=5, minutes=30)
     return ist_now.strftime("%d %b %Y %I:%M %p IST")
