@@ -8,7 +8,6 @@ import logging
 import sys
 import os
 from datetime import datetime, timezone, timedelta
-IST = timezone(timedelta(hours=5, minutes=30))
 from playwright.async_api import async_playwright
 
 # ---------------------------------------------
@@ -24,10 +23,10 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 SCREENSHOT_PATH    = "daily_screenshot.png"
 
-# IST Timezone
+# IST Timezone — UTC+5:30
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# Crop: skip sidebar (210px) and top header (155px)
+# Crop: skip sidebar and top header
 CROP_X      = 215
 CROP_Y      = 155
 CROP_WIDTH  = 1065
@@ -49,7 +48,7 @@ log.addHandler(console_handler)
 # ---------------------------------------------
 
 def send_to_telegram():
-    now     = datetime.now(IST).strftime("%d %b %Y %I:%M %p IST")
+    now     = datetime.now(IST).strftime("%d %b %Y %I:%M %p IST")   # ✅ IST time
     caption = f"Daily Order Summary\n{now}"
     try:
         with open(SCREENSHOT_PATH, "rb") as img:
