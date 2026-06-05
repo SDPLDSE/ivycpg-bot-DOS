@@ -1,11 +1,7 @@
 name: IvyCPG Daily Order Summary
 
 on:
-  schedule:
-    # 8:00 PM IST = 2:30 PM UTC, Mon-Sat only
-    - cron: '30 14 * * 1-6'
-
-  workflow_dispatch:
+  workflow_dispatch:  # Triggered by cron-job.org at exactly 8:00 PM IST
 
 jobs:
   run-bot:
