@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
 
 # ---------------------------------------------
-# CONFIG — values come from GitHub Secrets
+# CONFIG
 # ---------------------------------------------
 
 USERNAME           = os.environ.get("IVYDMS_USERNAME", "SABARI_2194")
@@ -23,6 +23,11 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 SCREENSHOT_PATH    = "daily_screenshot.png"
+
+CROP_X      = 215
+CROP_Y      = 155
+CROP_WIDTH  = 1065
+CROP_HEIGHT = 620
 
 # ---------------------------------------------
 # LOGGING
@@ -35,49 +40,24 @@ console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(formatter)
 log.addHandler(console_handler)
 
-# Crop: skip sidebar and top header
-CROP_X      = 215
-CROP_Y      = 155
-CROP_WIDTH  = 1065
-CROP_HEIGHT = 620
+# ---------------------------------------------
+# IST TIME
+# ---------------------------------------------
+
+def get_ist_time():
+    utc_now = datetime.utcnow()
+    ist_now = utc_now + timedelta(hours=5, minutes=30)
+    return ist_now
 
 # ---------------------------------------------
 # TELEGRAM
 # ---------------------------------------------
 
-def get_ist_time():
-    # Method 1: Use TZ environment variable approach
-    os.environ["TZ"] = "Asia/Kolkata"
-    try:
-        import time
-        time.tzset()
-    except Exception:
-        pass
-
-    # Method 2: Use date shell command as backup
-    try:
-        result = subprocess.run(
-            ["date", "+%d %b %Y %I:%M %p IST"],
-            env={**os.environ, "TZ": "Asia/Kolkata"},
-            capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except Exception as e:
-        log.error(f"Shell date failed: {e}")
-
-    # Method 3: Manual UTC+5:30 offset calculation
-    utc_now = datetime.utcnow()
-    ist_now = utc_now + timedelta(hours=5, minutes=30)
-    now = ist_now.strftime("%d %b %Y %I:%M %p IST")
-    from datetime import timedelta
-    ist_now = utc_now + timedelta(hours=5, minutes=30)
-    return ist_now.strftime("%d %b %Y %I:%M %p IST")
-
 def send_to_telegram():
-    ist_time = get_ist_time()
-    caption  = f"Daily Order Summary\n{ist_time}"
-    log.info(f"=== CAPTION: {caption} ===")
+    ist_now = get_ist_time()
+    now     = ist_now.strftime("%d %b %Y %I:%M %p IST")
+    caption = f"Daily Order Summary\n{now}"
+    log.info(f"Caption: {caption}")
     try:
         with open(SCREENSHOT_PATH, "rb") as img:
             resp = requests.post(
@@ -131,6 +111,11 @@ async def find_search_frame(page):
 async def run_automation():
     log.info("Starting automation run...")
 
+    # Get today's date in IST — format: 05-Jun-2026
+    ist_now   = get_ist_time()
+    today_ist = ist_now.strftime("%d-%b-%Y")
+    log.info(f"Setting order date to: {today_ist}")
+
     async with async_playwright() as p:
 
         browser = await p.chromium.launch(
@@ -148,6 +133,7 @@ async def run_automation():
         page    = await context.new_page()
 
         try:
+            # ── 1. Login ──────────────────────────────────────
             log.info(f"Opening: {SITE_URL}")
             await page.goto(SITE_URL, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(2000)
@@ -162,10 +148,12 @@ async def run_automation():
             await page.wait_for_timeout(4000)
             log.info(f"Logged in. URL: {page.url}")
 
+            # ── 2. Navigate via sidebar ───────────────────────
             await js_click_title(page, "Transactions")
             await js_click_title(page, "Receivables")
             await js_click_title(page, "Orders")
 
+            # ── 3. Click Daily Order Summary ──────────────────
             log.info("Clicking: Daily Order Summary")
             await page.evaluate("""
                 () => {
@@ -176,11 +164,38 @@ async def run_automation():
                 }
             """)
 
+            # ── 4. Find frame with Search button ─────────────
             log.info("Searching all frames for Search button...")
             target_frame = await find_search_frame(page)
             if target_frame is None:
                 raise Exception("Could not find fnLoadSerach in any frame.")
 
+            # ── 5. Set today's date in IST ────────────────────
+            log.info(f"Setting date field to: {today_ist}")
+            await target_frame.evaluate(f"""
+                () => {{
+                    // Try common date input selectors
+                    const selectors = [
+                        'input[name="orderDate"]',
+                        'input[id*="orderDate"]',
+                        'input[id*="date"]',
+                        'input[type="text"]'
+                    ];
+                    for (const sel of selectors) {{
+                        const el = document.querySelector(sel);
+                        if (el) {{
+                            el.value = '{today_ist}';
+                            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                            console.log('Date set on: ' + sel);
+                            break;
+                        }}
+                    }}
+                }}
+            """)
+            await page.wait_for_timeout(1000)
+
+            # ── 6. Click Search ───────────────────────────────
             log.info("Clicking Search button...")
             await target_frame.evaluate("""
                 () => {
@@ -192,6 +207,7 @@ async def run_automation():
             """)
             log.info("Search clicked.")
 
+            # ── 7. Wait for table rows ────────────────────────
             log.info("Waiting for results...")
             await page.wait_for_load_state("networkidle", timeout=15000)
 
@@ -208,6 +224,7 @@ async def run_automation():
 
             await page.wait_for_timeout(2000)
 
+            # ── 8. Cropped screenshot ─────────────────────────
             log.info("Taking screenshot...")
             await page.screenshot(
                 path=SCREENSHOT_PATH,
