@@ -18,7 +18,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install playwright requests pytz
+          pip install playwright requests pillow google-auth google-api-python-client
 
       - name: Install Playwright browsers
         run: |
@@ -31,5 +31,6 @@ jobs:
           IVYDMS_PASSWORD:    ${{ secrets.IVYDMS_PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: |
           python ivydms_autobot.py
