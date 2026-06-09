@@ -32,6 +32,7 @@ SHEET_ID           = "1Tpc1676oOssnl3j2lzlvwFfpUltkDJgklg5xB2_SX9c"
 SHEET_NAME         = "SUMMARY"
 SHEET_GID          = "1428175641"
 SHEET_SCREENSHOT   = "sheet_screenshot.png"
+SHEET_PUB_ID       = "2PACX-1vQndLO6fIA0NzpgluI0YPvExs3X-H7bUpvnd6DpYcgnlD4uqWZORg6rF5mTgNlEtd5PG2JMgMk1N1H4"
 
 # DSE ID → Sheet row number
 DSE_ROW_MAP = {
@@ -102,7 +103,7 @@ async def find_search_frame(page):
 
 async def extract_table_data(target_frame):
     try:
-        rows = await target_frame.evaluate("""
+        rows = await target_frame.evaluate(r"""
             () => {
                 const result = [];
                 const dataRows = document.querySelectorAll('.grid-data-row');
@@ -115,7 +116,7 @@ async def extract_table_data(target_frame):
                         const salesmanClean = salesman.replace('Salesman Name : ', '').trim();
                         const orderCount    = parseInt(orderTxt.replace(/\D/g, '')) || 0;
                         const valueClean    = parseFloat(
-                            valueTxt.replace(/[₹,\s]/g, '').replace('Order Value : ', '')
+                            valueTxt.replace('Order Value : ', '').replace(/[₹,\s]/g, '')
                         ) || 0;
                         if (salesmanClean && salesmanClean.includes('_')) {
                             result.push({
@@ -207,7 +208,7 @@ async def screenshot_sheet():
 
     # Use published HTML view — no login required
     pub_url = (
-        f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
+        f"https://docs.google.com/spreadsheets/d/e/{SHEET_PUB_ID}"
         f"/pubhtml?gid={SHEET_GID}&single=true"
     )
 
