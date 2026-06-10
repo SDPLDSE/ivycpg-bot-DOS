@@ -28,7 +28,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS", "")
 
-SHEET_ID           = "1Tpc1676oOssn13j2lzlvwFfpUltkDJgklg5xB2_SX9c"
+SHEET_ID           = "1Tpc1676oOssnl3j2lzlvwFfpUltkDJgklg5xB2_SX9c"
 SHEET_NAME         = "SUMMARY"
 SHEET_GID          = "1428175641"
 SHEET_SCREENSHOT   = "sheet_screenshot.png"
