@@ -222,26 +222,51 @@ async def screenshot_sheet():
                 "--disable-setuid-sandbox",
             ]
         )
-        context = await browser.new_context(viewport={"width": 1200, "height": 800})
+        # Wide viewport so the full table renders without clipping
+        context = await browser.new_context(viewport={"width": 1600, "height": 900})
         page    = await context.new_page()
 
         try:
             await page.goto(pub_url, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(4000)
 
-            # Take full screenshot
-            await page.screenshot(path="full_sheet.png")
-            log.info("Full sheet screenshot taken.")
+            # Google Sheets pubhtml renders the data inside an iframe.
+            # We must enter the iframe to find the correct table element.
+            box = None
+            iframe_el = await page.query_selector("iframe#pageswitcher-content")
+            if iframe_el:
+                frame     = await iframe_el.content_frame()
+                # The data table uses class "waffle" inside the iframe
+                table_el  = await frame.query_selector("table.waffle")
+                if not table_el:
+                    table_el = await frame.query_selector("table")
+                if table_el:
+                    box = await table_el.bounding_box()
+                    log.info(f"Table bounding box (page coords): {box}")
 
-            # Crop to table area
+            if box and box["width"] > 200:
+                pad_x  = 12   # horizontal padding
+                pad_top = 5   # tight top padding (avoids breadcrumb bar)
+                pad_bot = 12  # bottom padding
+                clip = {
+                    "x"     : max(0, box["x"] - pad_x),
+                    "y"     : max(0, box["y"] - pad_top),
+                    "width" : box["width"]  + pad_x * 2,
+                    "height": box["height"] + pad_top + pad_bot,
+                }
+                await page.screenshot(path=SHEET_SCREENSHOT, clip=clip)
+                log.info(f"Table screenshot saved (iframe clip): {SHEET_SCREENSHOT}")
+                return True
+
+            # Fallback: full page screenshot, crop to content area
+            log.warning("Table element not found in iframe — falling back to full page crop.")
+            await page.screenshot(path="full_sheet.png", full_page=True)
             img = Image.open("full_sheet.png")
             w, h = img.size
             log.info(f"Full image size: {w}x{h}")
-
-            # Crop published HTML view
-            cropped = img.crop((0, 60, w, 520))
+            cropped = img.crop((0, 25, w, min(h, 450)))
             cropped.save(SHEET_SCREENSHOT)
-            log.info(f"Cropped screenshot saved: {SHEET_SCREENSHOT}")
+            log.info(f"Fallback screenshot saved: {SHEET_SCREENSHOT}")
             return True
 
         except Exception as e:
