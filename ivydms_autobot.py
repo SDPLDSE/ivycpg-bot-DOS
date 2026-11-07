@@ -72,13 +72,11 @@ def get_ist_time():
 
 async def js_click_title(page, title):
     log.info(f"Clicking menu: {title}")
-    await page.evaluate(f"""
-        () => {{
-            const el = document.querySelector('a[title="{title}"]');
-            if (el) el.click();
-            else throw new Error('Not found: {title}');
-        }}
-    """)
+    selector = f'a[title="{title}"]'
+    # Wait up to 15 seconds for the menu item to appear in the DOM
+    await page.wait_for_selector(selector, state="attached", timeout=15000)
+    # Click the element once it is ready
+    await page.click(selector)
     await page.wait_for_timeout(2500)
 
 async def find_search_frame(page):
