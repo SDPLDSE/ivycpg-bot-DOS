@@ -71,13 +71,25 @@ def get_ist_time():
 # ---------------------------------------------
 
 async def js_click_title(page, title):
-    log.info(f"Clicking menu: {title}")
-    selector = f'a[title="{title}"]'
-    # Wait up to 15 seconds for the menu item to appear in the DOM
-    await page.wait_for_selector(selector, state="attached", timeout=15000)
-    # Click the element once it is ready
-    await page.click(selector)
-    await page.wait_for_timeout(2500)
+    log.info(f"Trying to click menu: {title}")
+    # Use specific locator to find ONLY the visible element, ignoring hidden duplicates
+    selector = f'a[title="{title}"] >> visible=true'
+    
+    try:
+        await page.wait_for_selector(selector, state="attached", timeout=15000)
+        # Using force=True bypasses strict visibility checks
+        await page.locator(selector).first.click(force=True)
+        await page.wait_for_timeout(2000)
+    except Exception as e:
+        log.warning(f"Playwright native click failed for {title}: {e}. Trying JS fallback...")
+        await page.evaluate(f"""
+            () => {{
+                const els = Array.from(document.querySelectorAll('a[title="{title}"]'));
+                const visibleEl = els.find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+                if (visibleEl) visibleEl.click();
+            }}
+        """)
+        await page.wait_for_timeout(2000)
 
 async def find_search_frame(page):
     for _ in range(40):
@@ -220,7 +232,6 @@ async def screenshot_sheet():
                 "--disable-setuid-sandbox",
             ]
         )
-        # Wide viewport so the full table renders without clipping
         context = await browser.new_context(viewport={"width": 1600, "height": 900})
         page    = await context.new_page()
 
@@ -228,13 +239,10 @@ async def screenshot_sheet():
             await page.goto(pub_url, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(4000)
 
-            # Google Sheets pubhtml renders the data inside an iframe.
-            # We must enter the iframe to find the correct table element.
             box = None
             iframe_el = await page.query_selector("iframe#pageswitcher-content")
             if iframe_el:
                 frame     = await iframe_el.content_frame()
-                # The data table uses class "waffle" inside the iframe
                 table_el  = await frame.query_selector("table.waffle")
                 if not table_el:
                     table_el = await frame.query_selector("table")
@@ -243,9 +251,9 @@ async def screenshot_sheet():
                     log.info(f"Table bounding box (page coords): {box}")
 
             if box and box["width"] > 200:
-                pad_x  = 12   # horizontal padding
-                pad_top = 5   # tight top padding (avoids breadcrumb bar)
-                pad_bot = 12  # bottom padding
+                pad_x  = 12   
+                pad_top = 5   
+                pad_bot = 12  
                 clip = {
                     "x"     : max(0, box["x"] - pad_x),
                     "y"     : max(0, box["y"] - pad_top),
@@ -256,12 +264,10 @@ async def screenshot_sheet():
                 log.info(f"Table screenshot saved (iframe clip): {SHEET_SCREENSHOT}")
                 return True
 
-            # Fallback: full page screenshot, crop to content area
             log.warning("Table element not found in iframe — falling back to full page crop.")
             await page.screenshot(path="full_sheet.png", full_page=True)
             img = Image.open("full_sheet.png")
             w, h = img.size
-            log.info(f"Full image size: {w}x{h}")
             cropped = img.crop((0, 25, w, min(h, 450)))
             cropped.save(SHEET_SCREENSHOT)
             log.info(f"Fallback screenshot saved: {SHEET_SCREENSHOT}")
@@ -308,10 +314,10 @@ async def run_automation():
     today_ist = ist_now.strftime("%d-%b-%Y")
     log.info(f"IST Date: {today_ist} | Time: {ist_now.strftime('%I:%M %p')}")
 
-    # ── STEP 1: Extract from IvyDMS ───────────────────────
     table_rows = []
 
     async with async_playwright() as p:
+        # Headless mode for GitHub Actions
         browser = await p.chromium.launch(
             headless=True,
             args=[
@@ -405,16 +411,16 @@ async def run_automation():
         log.error("No data extracted from portal!")
         return
 
-    # ── STEP 2: Update Google Sheet ───────────────────────
+    # Update Google Sheet
     sheet_updated = update_google_sheet(table_rows)
     if sheet_updated:
         log.info("Waiting 5 seconds for sheet to sync...")
         time.sleep(5)
 
-    # ── STEP 3: Screenshot Sheet ──────────────────────────
+    # Screenshot Sheet
     sheet_ok = await screenshot_sheet()
 
-    # ── STEP 4: Send to Telegram ──────────────────────────
+    # Send to Telegram
     if sheet_ok:
         send_photo_to_telegram(ist_now)
     else:
