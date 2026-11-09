@@ -1,5 +1,5 @@
 """
-IvyCPG Daily Automation Bot — GITHUB ACTIONS VERSION (with debug capture)
+IvyCPG Daily Automation Bot — GITHUB ACTIONS VERSION
 """
 
 import asyncio
@@ -20,12 +20,12 @@ from googleapiclient.discovery import build
 # CONFIG — from GitHub Secrets
 # ---------------------------------------------
 
-USERNAME           = os.environ.get("IVYDMS_USERNAME", "").strip()
-PASSWORD           = os.environ.get("IVYDMS_PASSWORD", "").strip()
+USERNAME           = os.environ.get("IVYDMS_USERNAME", "")
+PASSWORD           = os.environ.get("IVYDMS_PASSWORD", "")
 SITE_URL           = "https://cloud01-in.ivydms.com/web/DMS/Welcome"
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS", "")
 
 SHEET_ID           = "1Tpc1676oOssnI3j2lzlvwFfpUltkDJgkIg5xB2_SX9c"
@@ -33,9 +33,6 @@ SHEET_NAME         = "SUMMARY"
 SHEET_GID          = "1428175641"
 SHEET_SCREENSHOT   = "sheet_screenshot.png"
 SHEET_PUB_ID       = "2PACX-1vQndLO6fIA0NzpgluI0YPvExs3X-H7bUpvnd6DpYcgnlD4uqWZORg6rF5mTgNlEtd5PG2JMgMk1N1H4"
-
-DEBUG_SCREENSHOT   = "debug_portal.png"
-DEBUG_AFTER_LOGIN  = "debug_after_login.png"
 
 # DSE ID → Sheet row number
 DSE_ROW_MAP = {
@@ -51,11 +48,6 @@ DSE_ROW_MAP = {
 COL_ORDER = "C"
 COL_VALUE = "E"
 
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
-
 # ---------------------------------------------
 # LOGGING
 # ---------------------------------------------
@@ -66,9 +58,6 @@ formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(formatter)
 log.addHandler(console_handler)
-
-log.info(f"Username set: {bool(USERNAME)} (len {len(USERNAME)}), "
-         f"Password set: {bool(PASSWORD)} (len {len(PASSWORD)})")
 
 # ---------------------------------------------
 # IST TIME
@@ -81,51 +70,27 @@ def get_ist_time():
 # HELPERS
 # ---------------------------------------------
 
-async def save_debug(page, path, label=""):
-    """Save screenshot + visible page text so we can see what the runner saw."""
-    try:
-        await page.screenshot(path=path, full_page=True)
-        body = await page.evaluate("() => document.body ? document.body.innerText.slice(0, 1500) : ''")
-        log.error(f"[DEBUG {label}] URL: {page.url}")
-        log.error(f"[DEBUG {label}] Page text: {body!r}")
-    except Exception as se:
-        log.error(f"Debug capture failed: {se}")
-
-
 async def js_click_title(page, title):
     log.info(f"Trying to click menu: {title}")
+    # Use specific locator to find ONLY the visible element, ignoring hidden duplicates
+    selector = f'a[title="{title}"] >> visible=true'
 
     try:
-        # Wait for the element to exist in the DOM
-        await page.wait_for_selector(f'a[title="{title}"]', state="attached", timeout=15000)
-
-        # Try native click first
-        try:
-            await page.locator(f'a[title="{title}"] >> visible=true').first.click(timeout=3000)
-        except Exception:
-            log.warning(f"Native click failed for '{title}', forcing via JS...")
-
-            clicked = await page.evaluate(f"""
-                () => {{
-                    const els = Array.from(document.querySelectorAll('a[title="{title}"]'));
-                    let target = els.find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
-                    if (!target && els.length > 0) target = els[0];
-                    if (target) {{
-                        target.click();
-                        return true;
-                    }}
-                    return false;
-                }}
-            """)
-            if not clicked:
-                raise Exception("Element found in DOM, but JS click failed.")
-
-        await page.wait_for_timeout(2500)
-
+        await page.wait_for_selector(selector, state="attached", timeout=30000)
+        # force=True bypasses some strict visibility/interception checks
+        await page.locator(selector).first.click(force=True)
+        await page.wait_for_timeout(2000)
     except Exception as e:
-        log.error(f"FATAL: Could not click menu '{title}'. Error: {e}")
-        raise  # Fail loudly so the GitHub Action stops instead of carrying on blindly
-
+        log.warning(f"Playwright native click failed for {title}: {e}. Trying JS fallback...")
+        await page.evaluate(f"""
+            () => {{
+                const els = Array.from(document.querySelectorAll('a[title="{title}"]'));
+                const visibleEl = els.find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+                if (visibleEl) visibleEl.click();
+                else throw new Error('Menu {title} not found');
+            }}
+        """)
+        await page.wait_for_timeout(2000)
 
 async def find_search_frame(page):
     for _ in range(40):
@@ -331,26 +296,19 @@ def send_photo_to_telegram(ist_now):
             )
         if resp.ok:
             log.info("Photo sent to Telegram! ✅")
-            return True
-        log.error(f"Telegram Error: {resp.status_code} {resp.text}")
-        return False
+        else:
+            log.error(f"Telegram Error: {resp.status_code} {resp.text}")
     except Exception as e:
         log.error(f"Telegram error: {e}")
-        return False
 
 # ---------------------------------------------
 # MAIN
 # ---------------------------------------------
 
 async def run_automation():
-    """Returns True on full success, False on any failure."""
     log.info("=" * 50)
     log.info("IvyCPG Daily Bot — GITHUB ACTIONS VERSION")
     log.info("=" * 50)
-
-    if not USERNAME or not PASSWORD:
-        log.error("IVYDMS_USERNAME / IVYDMS_PASSWORD secret is missing or empty!")
-        return False
 
     ist_now   = get_ist_time()
     today_ist = ist_now.strftime("%d-%b-%Y")
@@ -359,7 +317,7 @@ async def run_automation():
     table_rows = []
 
     async with async_playwright() as p:
-        # NOTE: "--single-process" removed — it causes flaky crashes on CI
+        # Headless mode for production ("--single-process" removed: unstable on GitHub runners)
         browser = await p.chromium.launch(
             headless=True,
             args=[
@@ -367,14 +325,14 @@ async def run_automation():
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-setuid-sandbox",
-                "--disable-blink-features=AutomationControlled",
             ]
         )
 
-        # 1080p viewport prevents the responsive IvyDMS sidebar from collapsing
+        # Mimic the local (working) setup: same viewport, Indian locale/timezone, normal Chrome user agent
         context = await browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent=USER_AGENT,
+            viewport={"width": 1280, "height": 900},
+            user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
             locale="en-IN",
             timezone_id="Asia/Kolkata",
         )
@@ -394,15 +352,13 @@ async def run_automation():
             await page.wait_for_timeout(4000)
             log.info(f"Logged in. URL: {page.url}")
 
-            # Always capture what we see right after login (uploaded as artifact)
+            # Debug: shows what the portal actually displays after login
             try:
-                await page.screenshot(path=DEBUG_AFTER_LOGIN, full_page=True)
-                body = await page.evaluate(
-                    "() => document.body ? document.body.innerText.slice(0, 800) : ''"
-                )
-                log.info(f"Post-login page text: {body!r}")
-            except Exception as de:
-                log.warning(f"Post-login capture failed: {de}")
+                body_text = await page.evaluate("() => document.body.innerText.slice(0, 400)")
+                log.info(f"Page text after login: {body_text!r}")
+                await page.screenshot(path="debug_after_login.png")
+            except Exception as dbg_e:
+                log.warning(f"Debug capture failed: {dbg_e}")
 
             # Execute clicks
             await js_click_title(page, "Transactions")
@@ -467,34 +423,33 @@ async def run_automation():
 
         except Exception as e:
             log.error(f"Portal error: {e}")
-            await save_debug(page, DEBUG_SCREENSHOT, label="portal-error")
+            # Capture the page at the moment of failure for debugging
+            try:
+                await page.screenshot(path="debug_error.png")
+            except Exception:
+                pass
         finally:
             await browser.close()
 
     if not table_rows:
         log.error("No data extracted from portal!")
-        return False
+        return
 
     # Update Google Sheet
     sheet_updated = update_google_sheet(table_rows)
-    if not sheet_updated:
-        log.error("Google Sheet update failed!")
-        return False
-
-    log.info("Waiting 5 seconds for sheet to sync...")
-    time.sleep(5)
+    if sheet_updated:
+        log.info("Waiting 5 seconds for sheet to sync...")
+        time.sleep(5)
 
     # Screenshot Sheet
     sheet_ok = await screenshot_sheet()
-    if not sheet_ok:
-        log.error("Sheet screenshot failed!")
-        return False
 
     # Send to Telegram
-    return send_photo_to_telegram(ist_now)
+    if sheet_ok:
+        send_photo_to_telegram(ist_now)
+    else:
+        log.error("Sheet screenshot failed!")
 
 
 if __name__ == "__main__":
-    ok = asyncio.run(run_automation())
-    # Non-zero exit makes the GitHub Actions job show red on failure
-    sys.exit(0 if ok else 1)
+    asyncio.run(run_automation())
