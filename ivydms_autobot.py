@@ -72,25 +72,38 @@ def get_ist_time():
 
 async def js_click_title(page, title):
     log.info(f"Trying to click menu: {title}")
-    # Use specific locator to find ONLY the visible element, ignoring hidden duplicates
-    selector = f'a[title="{title}"] >> visible=true'
-
+    
     try:
-        await page.wait_for_selector(selector, state="attached", timeout=30000)
-        # force=True bypasses some strict visibility/interception checks
-        await page.locator(selector).first.click(force=True)
-        await page.wait_for_timeout(2000)
+        # Wait for the element to exist in the DOM
+        await page.wait_for_selector(f'a[title="{title}"]', state="attached", timeout=15000)
+        
+        # Try native click first
+        try:
+            await page.locator(f'a[title="{title}"] >> visible=true').first.click(timeout=3000)
+        except Exception as native_e:
+            log.warning(f"Native click failed for '{title}', forcing via JS...")
+            
+            # Force click via JavaScript if native click is blocked/hidden
+            clicked = await page.evaluate(f"""
+                () => {{
+                    const els = Array.from(document.querySelectorAll('a[title="{title}"]'));
+                    let target = els.find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+                    if (!target && els.length > 0) target = els[0];
+                    if (target) {{
+                        target.click();
+                        return true;
+                    }}
+                    return false;
+                }}
+            """)
+            if not clicked:
+                raise Exception("Element found in DOM, but JS click failed.")
+                
+        await page.wait_for_timeout(2500)
+        
     except Exception as e:
-        log.warning(f"Playwright native click failed for {title}: {e}. Trying JS fallback...")
-        await page.evaluate(f"""
-            () => {{
-                const els = Array.from(document.querySelectorAll('a[title="{title}"]'));
-                const visibleEl = els.find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
-                if (visibleEl) visibleEl.click();
-                else throw new Error('Menu {title} not found');
-            }}
-        """)
-        await page.wait_for_timeout(2000)
+        log.error(f"FATAL: Could not click menu '{title}'. Error: {e}")
+        raise # Fail loudly so the GitHub Action stops instead of carrying on blindly
 
 async def find_search_frame(page):
     for _ in range(40):
@@ -251,9 +264,9 @@ async def screenshot_sheet():
                     log.info(f"Table bounding box (page coords): {box}")
 
             if box and box["width"] > 200:
-                pad_x   = 12
-                pad_top = 5
-                pad_bot = 12
+                pad_x  = 12   
+                pad_top = 5   
+                pad_bot = 12  
                 clip = {
                     "x"     : max(0, box["x"] - pad_x),
                     "y"     : max(0, box["y"] - pad_top),
@@ -317,26 +330,21 @@ async def run_automation():
     table_rows = []
 
     async with async_playwright() as p:
-        # Headless mode for production ("--single-process" removed: unstable on GitHub runners)
+        # Headless mode for production
         browser = await p.chromium.launch(
-            headless=True,
+            headless=True,  
             args=[
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-setuid-sandbox",
+                "--single-process",
             ]
         )
-
-        # Mimic the local (working) setup: same viewport, Indian locale/timezone, normal Chrome user agent
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
-            locale="en-IN",
-            timezone_id="Asia/Kolkata",
-        )
-        page = await context.new_page()
+        
+        # 1080p viewport prevents the responsive IvyDMS sidebar from collapsing
+        context = await browser.new_context(viewport={"width": 1920, "height": 1080})
+        page    = await context.new_page()
 
         try:
             log.info(f"Opening: {SITE_URL}")
@@ -346,21 +354,13 @@ async def run_automation():
             await page.fill('input[name="UserName"]', USERNAME)
             await page.fill('input[name="Password"]', PASSWORD)
             await page.click('input[type="submit"], button[type="submit"], #btnLogin')
-
+            
             # Wait for dashboard to fully load
             await page.wait_for_load_state("networkidle", timeout=30000)
             await page.wait_for_timeout(4000)
             log.info(f"Logged in. URL: {page.url}")
 
-            # Debug: shows what the portal actually displays after login
-            try:
-                body_text = await page.evaluate("() => document.body.innerText.slice(0, 400)")
-                log.info(f"Page text after login: {body_text!r}")
-                await page.screenshot(path="debug_after_login.png")
-            except Exception as dbg_e:
-                log.warning(f"Debug capture failed: {dbg_e}")
-
-            # Execute clicks
+            # Execute clicks 
             await js_click_title(page, "Transactions")
             await js_click_title(page, "Receivables")
             await js_click_title(page, "Orders")
@@ -423,11 +423,6 @@ async def run_automation():
 
         except Exception as e:
             log.error(f"Portal error: {e}")
-            # Capture the page at the moment of failure for debugging
-            try:
-                await page.screenshot(path="debug_error.png")
-            except Exception:
-                pass
         finally:
             await browser.close()
 
