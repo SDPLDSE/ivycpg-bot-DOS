@@ -71,25 +71,38 @@ def get_ist_time():
 # ---------------------------------------------
 
 async def js_click_title(page, title):
-    log.info(f"Trying to click menu: {title}")
-    # Use specific locator to find ONLY the visible element, ignoring hidden duplicates
-    selector = f'a[title="{title}"] >> visible=true'
-    
+    log.info(f"Clicking menu: {title}")
     try:
-        await page.wait_for_selector(selector, state="attached", timeout=15000)
-        # Using force=True bypasses strict visibility checks
-        await page.locator(selector).first.click(force=True)
-        await page.wait_for_timeout(2000)
-    except Exception as e:
-        log.warning(f"Playwright native click failed for {title}: {e}. Trying JS fallback...")
-        await page.evaluate(f"""
+        # Wait for the element to just exist in the DOM (ignoring if it's visually hidden)
+        await page.wait_for_selector(f'a[title="{title}"]', state="attached", timeout=15000)
+        
+        # Force the click via JavaScript
+        clicked = await page.evaluate(f"""
             () => {{
                 const els = Array.from(document.querySelectorAll('a[title="{title}"]'));
-                const visibleEl = els.find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
-                if (visibleEl) visibleEl.click();
+                
+                // First try to find one that is visible
+                let target = els.find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+                
+                // If none are "visible", just grab the first one in the DOM anyway
+                if (!target && els.length > 0) target = els[0];
+                
+                if (target) {{
+                    target.click();
+                    return true;
+                }}
+                return false;
             }}
         """)
+        
+        if not clicked:
+            raise Exception(f"Element found but JavaScript click failed.")
+            
         await page.wait_for_timeout(2000)
+        
+    except Exception as e:
+        log.error(f"FATAL: Could not click menu '{title}'. Error: {e}")
+        raise # Stop the script immediately if a menu fails to open
 
 async def find_search_frame(page):
     for _ in range(40):
@@ -328,7 +341,10 @@ async def run_automation():
                 "--single-process",
             ]
         )
-        context = await browser.new_context(viewport={"width": 1280, "height": 900})
+        
+        # INCREASED VIEWPORT to prevent the IvyDMS dashboard from auto-collapsing its menus 
+        # in the headless virtual display
+        context = await browser.new_context(viewport={"width": 1920, "height": 1080})
         page    = await context.new_page()
 
         try:
