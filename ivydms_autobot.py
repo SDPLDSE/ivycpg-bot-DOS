@@ -1,6 +1,4 @@
-from pathlib import Path
-
-script = r'''"""
+"""
 IvyCPG Daily Automation Bot — GITHUB ACTIONS VERSION
 Updated: robust IvyDMS menu detection across the main page and iframes.
 """
@@ -813,7 +811,3 @@ async def run_automation():
 
 if __name__ == "__main__":
     asyncio.run(run_automation())
-'''
-path = Path("/mnt/data/ivycpg_daily_bot_updated.py")
-path.write_text(script, encoding="utf-8")
-print(f"Created: {path}\nSize: {path.stat().st_size:,} bytes\nLines: {len(script.splitlines())}")
