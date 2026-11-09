@@ -71,38 +71,39 @@ def get_ist_time():
 # ---------------------------------------------
 
 async def js_click_title(page, title):
-    log.info(f"Clicking menu: {title}")
+    log.info(f"Trying to click menu: {title}")
+    
     try:
-        # Wait for the element to just exist in the DOM (ignoring if it's visually hidden)
+        # Wait for the element to exist in the DOM
         await page.wait_for_selector(f'a[title="{title}"]', state="attached", timeout=15000)
         
-        # Force the click via JavaScript
-        clicked = await page.evaluate(f"""
-            () => {{
-                const els = Array.from(document.querySelectorAll('a[title="{title}"]'));
-                
-                // First try to find one that is visible
-                let target = els.find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
-                
-                // If none are "visible", just grab the first one in the DOM anyway
-                if (!target && els.length > 0) target = els[0];
-                
-                if (target) {{
-                    target.click();
-                    return true;
-                }}
-                return false;
-            }}
-        """)
-        
-        if not clicked:
-            raise Exception(f"Element found but JavaScript click failed.")
+        # Try native click first
+        try:
+            await page.locator(f'a[title="{title}"] >> visible=true').first.click(timeout=3000)
+        except Exception as native_e:
+            log.warning(f"Native click failed for '{title}', forcing via JS...")
             
-        await page.wait_for_timeout(2000)
+            # Force click via JavaScript if native click is blocked/hidden
+            clicked = await page.evaluate(f"""
+                () => {{
+                    const els = Array.from(document.querySelectorAll('a[title="{title}"]'));
+                    let target = els.find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+                    if (!target && els.length > 0) target = els[0];
+                    if (target) {{
+                        target.click();
+                        return true;
+                    }}
+                    return false;
+                }}
+            """)
+            if not clicked:
+                raise Exception("Element found in DOM, but JS click failed.")
+                
+        await page.wait_for_timeout(2500)
         
     except Exception as e:
         log.error(f"FATAL: Could not click menu '{title}'. Error: {e}")
-        raise # Stop the script immediately if a menu fails to open
+        raise # Fail loudly so the GitHub Action stops instead of carrying on blindly
 
 async def find_search_frame(page):
     for _ in range(40):
@@ -229,7 +230,6 @@ def update_google_sheet(table_rows):
 async def screenshot_sheet():
     log.info("Taking screenshot of Google Sheet...")
 
-    # Use published HTML view — no login required
     pub_url = (
         f"https://docs.google.com/spreadsheets/d/e/{SHEET_PUB_ID}"
         f"/pubhtml?gid={SHEET_GID}&single=true"
@@ -330,9 +330,9 @@ async def run_automation():
     table_rows = []
 
     async with async_playwright() as p:
-        # Headless mode for GitHub Actions
+        # Headless mode for production
         browser = await p.chromium.launch(
-            headless=True,
+            headless=True,  
             args=[
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
@@ -342,8 +342,7 @@ async def run_automation():
             ]
         )
         
-        # INCREASED VIEWPORT to prevent the IvyDMS dashboard from auto-collapsing its menus 
-        # in the headless virtual display
+        # 1080p viewport prevents the responsive IvyDMS sidebar from collapsing
         context = await browser.new_context(viewport={"width": 1920, "height": 1080})
         page    = await context.new_page()
 
@@ -355,14 +354,18 @@ async def run_automation():
             await page.fill('input[name="UserName"]', USERNAME)
             await page.fill('input[name="Password"]', PASSWORD)
             await page.click('input[type="submit"], button[type="submit"], #btnLogin')
-            await page.wait_for_load_state("networkidle", timeout=20000)
+            
+            # Wait for dashboard to fully load
+            await page.wait_for_load_state("networkidle", timeout=30000)
             await page.wait_for_timeout(4000)
             log.info(f"Logged in. URL: {page.url}")
 
+            # Execute clicks 
             await js_click_title(page, "Transactions")
             await js_click_title(page, "Receivables")
             await js_click_title(page, "Orders")
 
+            # Click Daily Order Summary
             await page.evaluate("""
                 () => {
                     const links = Array.from(document.querySelectorAll('a'));
