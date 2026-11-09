@@ -1,5 +1,5 @@
 """
-IvyCPG Daily Automation Bot — LOCAL HEADED TEST VERSION
+IvyCPG Daily Automation Bot — GITHUB ACTIONS READY VERSION
 """
 
 import asyncio
@@ -17,15 +17,15 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 # ---------------------------------------------
-# CONFIG — Replace with your details for local testing
+# CONFIG
 # ---------------------------------------------
 
-USERNAME           = os.environ.get("IVYDMS_USERNAME", "YOUR_USERNAME_HERE")
-PASSWORD           = os.environ.get("IVYDMS_PASSWORD", "YOUR_PASSWORD_HERE")
+USERNAME           = os.environ.get("IVYDMS_USERNAME", "")
+PASSWORD           = os.environ.get("IVYDMS_PASSWORD", "")
 SITE_URL           = "https://cloud01-in.ivydms.com/web/DMS/Welcome"
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
-TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS", "{}")
 
 SHEET_ID           = "1Tpc1676oOssnI3j2lzlvwFfpUltkDJgkIg5xB2_SX9c"
@@ -202,15 +202,13 @@ async def screenshot_sheet():
     )
 
     async with async_playwright() as p:
-       browser = await p.chromium.launch(
-            headless=True,       # Changed to True for server environments
-            # slow_mo removed to allow the bot to run at full speed
+        browser = await p.chromium.launch(
+            headless=True,  
             args=[
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-setuid-sandbox",
-                "--single-process",
             ]
         )
         context = await browser.new_context(viewport={"width": 1600, "height": 900})
@@ -288,7 +286,7 @@ def send_photo_to_telegram(ist_now):
 
 async def run_automation():
     log.info("=" * 50)
-    log.info("IvyCPG Daily Bot — LOCAL HEADED TEST VERSION")
+    log.info("IvyCPG Daily Bot — GITHUB ACTIONS RUN")
     log.info("=" * 50)
 
     ist_now   = get_ist_time()
@@ -298,11 +296,9 @@ async def run_automation():
     table_rows = []
 
     async with async_playwright() as p:
-        # headless=False shows the browser UI
-        # slow_mo=500 adds a 500ms delay between actions so you can observe the process
+        # headless=True is REQUIRED for GitHub Actions
         browser = await p.chromium.launch(
-            headless=False,  
-            slow_mo=500,     
+            headless=True,  
             args=[
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
@@ -340,7 +336,7 @@ async def run_automation():
             await search_box.press_sequentially("Daily Order Summary", delay=50)
             
             # Wait for the autocomplete dropdown to fetch and render
-            await page.wait_for_timeout(1500) 
+            await page.wait_for_timeout(2000) 
 
             # Target the specific dropdown list item containing our text
             dropdown_item = page.locator(".ui-autocomplete li").filter(has_text="Daily Order Summary").first
@@ -348,7 +344,7 @@ async def run_automation():
             await dropdown_item.click()
 
             log.info("Successfully clicked Daily Order Summary from search results.")
-            await page.wait_for_timeout(3000) # Wait for the target frame to load
+            await page.wait_for_timeout(4000) # Wait for the target frame to load
             # ----------------------------------------------------
 
             target_frame = await find_search_frame(page)
