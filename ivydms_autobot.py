@@ -202,13 +202,15 @@ async def screenshot_sheet():
     )
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,  # Keep this headless even for local tests to grab a clean screenshot
+       browser = await p.chromium.launch(
+            headless=True,       # Changed to True for server environments
+            # slow_mo removed to allow the bot to run at full speed
             args=[
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-setuid-sandbox",
+                "--single-process",
             ]
         )
         context = await browser.new_context(viewport={"width": 1600, "height": 900})
