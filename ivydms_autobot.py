@@ -10,7 +10,7 @@ import os
 import re
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from playwright.async_api import async_playwright
 from PIL import Image
 from google.oauth2 import service_account
@@ -34,17 +34,10 @@ SHEET_GID          = "1428175641"
 SHEET_SCREENSHOT   = "sheet_screenshot.png"
 SHEET_PUB_ID       = "2PACX-1vQndLO6fIA0NzpgluI0YPvExs3X-H7bUpvnd6DpYcgnlD4uqWZORg6rF5mTgNlEtd5PG2JMgMk1N1H4"
 
-# DSE ID → Sheet row number
 DSE_ROW_MAP = {
-    "13427": 3,   # AKHIL K A
-    "13388": 4,   # BILHAN S S
-    "11636": 5,   # AJEESH G
-    "11199": 6,   # SUNILKUMAR V I
-    "7878" : 7,   # MAHESH CHANDRAN M R
-    "11141": 8,   # MOHANKUMAR K
-    "6334" : 9,   # UNNI S K
+    "13427": 3, "13388": 4, "11636": 5, "11199": 6,
+    "7878" : 7, "11141": 8, "6334" : 9,
 }
-
 COL_ORDER = "C"
 COL_VALUE = "E"
 
@@ -60,15 +53,12 @@ console_handler.setFormatter(formatter)
 log.addHandler(console_handler)
 
 # ---------------------------------------------
-# IST TIME
+# HELPERS
 # ---------------------------------------------
 
 def get_ist_time():
-    return datetime.utcnow() + timedelta(hours=5, minutes=30)
-
-# ---------------------------------------------
-# HELPERS
-# ---------------------------------------------
+    # Fixed deprecation warning for utcnow()
+    return datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
 
 async def find_search_frame(page):
     for _ in range(40):
@@ -79,16 +69,11 @@ async def find_search_frame(page):
                           !!document.querySelector('a[onclick*="fnLoadSerach"]')
                 """)
                 if found:
-                    log.info(f"Found search frame: {frame.url}")
                     return frame
             except Exception:
                 pass
         await page.wait_for_timeout(500)
     return None
-
-# ---------------------------------------------
-# EXTRACT FROM IVYDMS
-# ---------------------------------------------
 
 async def extract_table_data(target_frame):
     try:
@@ -128,10 +113,6 @@ async def extract_table_data(target_frame):
         log.error(f"Extraction error: {e}")
         return []
 
-# ---------------------------------------------
-# UPDATE GOOGLE SHEET VIA SERVICE ACCOUNT
-# ---------------------------------------------
-
 def update_google_sheet(table_rows):
     log.info("Updating Google Sheet via Service Account...")
     try:
@@ -143,7 +124,6 @@ def update_google_sheet(table_rows):
         service = build("sheets", "v4", credentials=creds)
         sheet   = service.spreadsheets()
 
-        # Build portal data lookup by ID
         portal_data = {}
         for row in table_rows:
             id_match = re.search(r'_\s*(\d+)', row.get("salesman", ""))
@@ -152,9 +132,7 @@ def update_google_sheet(table_rows):
                     "order_count": row.get("order_count", 0),
                     "order_value": round(row.get("order_value_raw", 0), 2)
                 }
-        log.info(f"Portal data: {portal_data}")
 
-        # Build batch update
         batch_data = []
         for dse_id, row_num in DSE_ROW_MAP.items():
             if dse_id in portal_data:
@@ -163,17 +141,9 @@ def update_google_sheet(table_rows):
             else:
                 orders = 0
                 value  = 0
-                log.warning(f"  ID {dse_id} not in portal — writing 0")
 
-            batch_data.append({
-                "range" : f"{SHEET_NAME}!{COL_ORDER}{row_num}",
-                "values": [[orders]]
-            })
-            batch_data.append({
-                "range" : f"{SHEET_NAME}!{COL_VALUE}{row_num}",
-                "values": [[value]]
-            })
-            log.info(f"  Row {row_num} ID={dse_id}: Orders={orders} Value={value}")
+            batch_data.append({"range" : f"{SHEET_NAME}!{COL_ORDER}{row_num}", "values": [[orders]]})
+            batch_data.append({"range" : f"{SHEET_NAME}!{COL_VALUE}{row_num}", "values": [[value]]})
 
         result = sheet.values().batchUpdate(
             spreadsheetId=SHEET_ID,
@@ -188,28 +158,14 @@ def update_google_sheet(table_rows):
         log.error(f"Sheet update error: {e}")
         return False
 
-# ---------------------------------------------
-# SCREENSHOT SHEET — PUBLISHED HTML
-# ---------------------------------------------
-
 async def screenshot_sheet():
     log.info("Taking screenshot of Google Sheet...")
-
-    # Use published HTML view — no login required
-    pub_url = (
-        f"https://docs.google.com/spreadsheets/d/e/{SHEET_PUB_ID}"
-        f"/pubhtml?gid={SHEET_GID}&single=true"
-    )
+    pub_url = f"https://docs.google.com/spreadsheets/d/e/{SHEET_PUB_ID}/pubhtml?gid={SHEET_GID}&single=true"
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,  
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-setuid-sandbox",
-            ]
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-setuid-sandbox"]
         )
         context = await browser.new_context(viewport={"width": 1600, "height": 900})
         page    = await context.new_page()
@@ -227,40 +183,29 @@ async def screenshot_sheet():
                     table_el = await frame.query_selector("table")
                 if table_el:
                     box = await table_el.bounding_box()
-                    log.info(f"Table bounding box (page coords): {box}")
 
             if box and box["width"] > 200:
-                pad_x   = 12   
-                pad_top = 5   
-                pad_bot = 12  
+                pad = 12   
                 clip = {
-                    "x"     : max(0, box["x"] - pad_x),
-                    "y"     : max(0, box["y"] - pad_top),
-                    "width" : box["width"]  + pad_x * 2,
-                    "height": box["height"] + pad_top + pad_bot,
+                    "x"     : max(0, box["x"] - pad),
+                    "y"     : max(0, box["y"] - 5),
+                    "width" : box["width"]  + pad * 2,
+                    "height": box["height"] + 17,
                 }
                 await page.screenshot(path=SHEET_SCREENSHOT, clip=clip)
-                log.info(f"Table screenshot saved (iframe clip): {SHEET_SCREENSHOT}")
                 return True
 
-            log.warning("Table element not found in iframe — falling back to full page crop.")
             await page.screenshot(path="full_sheet.png", full_page=True)
             img = Image.open("full_sheet.png")
             w, h = img.size
             cropped = img.crop((0, 25, w, min(h, 450)))
             cropped.save(SHEET_SCREENSHOT)
-            log.info(f"Fallback screenshot saved: {SHEET_SCREENSHOT}")
             return True
-
         except Exception as e:
             log.error(f"Sheet screenshot error: {e}")
             return False
         finally:
             await browser.close()
-
-# ---------------------------------------------
-# SEND TO TELEGRAM
-# ---------------------------------------------
 
 def send_photo_to_telegram(ist_now):
     now     = ist_now.strftime("%d %b %Y %I:%M %p IST")
@@ -291,72 +236,62 @@ async def run_automation():
 
     ist_now   = get_ist_time()
     today_ist = ist_now.strftime("%d-%b-%Y")
-    log.info(f"IST Date: {today_ist} | Time: {ist_now.strftime('%I:%M %p')}")
+    log.info(f"IST Date: {today_ist}")
 
     table_rows = []
 
     async with async_playwright() as p:
-        # headless=True is REQUIRED for GitHub Actions
         browser = await p.chromium.launch(
             headless=True,  
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-setuid-sandbox",
-                "--single-process",
-            ]
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-setuid-sandbox", "--single-process"]
         )
         context = await browser.new_context(viewport={"width": 1280, "height": 900})
         page    = await context.new_page()
 
         try:
             log.info(f"Opening: {SITE_URL}")
-            await page.goto(SITE_URL, wait_until="networkidle", timeout=30000)
+            await page.goto(SITE_URL, wait_until="networkidle", timeout=45000)
             await page.wait_for_timeout(2000)
 
             await page.fill('input[name="UserName"]', USERNAME)
             await page.fill('input[name="Password"]', PASSWORD)
             await page.click('input[type="submit"], button[type="submit"], #btnLogin')
             
-            # Wait for dashboard to fully load
-            await page.wait_for_load_state("networkidle", timeout=30000)
-            await page.wait_for_timeout(4000)
-            log.info(f"Logged in. URL: {page.url}")
+            # Massive wait to ensure GitHub runners clear the Login/IndexSubmit redirect
+            log.info("Waiting 15 seconds for dashboard to load completely...")
+            await page.wait_for_timeout(15000)
+            
+            # Additional check to wait for URL change
+            try:
+                await page.wait_for_url("**/Welcome*", timeout=15000)
+            except Exception:
+                log.warning("URL didn't match /Welcome, but proceeding anyway...")
+                
+            log.info(f"Logged in. Current URL: {page.url}")
 
-            # ----------------------------------------------------
-            # Navigate via the Menu Search Box
-            # ----------------------------------------------------
             log.info("Searching for 'Daily Order Summary' in the sidebar...")
             search_box = page.locator("#MenuSearchBox")
-            await search_box.wait_for(state="visible", timeout=15000)
+            await search_box.wait_for(state="visible", timeout=30000)
             await search_box.click()
 
-            # Use press_sequentially with a delay to simulate human typing.
             await search_box.press_sequentially("Daily Order Summary", delay=50)
-            
-            # Wait for the autocomplete dropdown to fetch and render
             await page.wait_for_timeout(2000) 
 
-            # Target the specific dropdown list item containing our text
             dropdown_item = page.locator(".ui-autocomplete li").filter(has_text="Daily Order Summary").first
-            await dropdown_item.wait_for(state="visible", timeout=10000)
+            await dropdown_item.wait_for(state="visible", timeout=15000)
             await dropdown_item.click()
 
             log.info("Successfully clicked Daily Order Summary from search results.")
-            await page.wait_for_timeout(4000) # Wait for the target frame to load
-            # ----------------------------------------------------
+            await page.wait_for_timeout(4000) 
 
             target_frame = await find_search_frame(page)
             if not target_frame:
                 raise Exception("Search frame not found.")
 
-            # Set today's date
             await target_frame.evaluate(f"""
                 () => {{
                     document.querySelectorAll('input').forEach(inp => {{
-                        if ((inp.name || inp.id || '').toLowerCase().includes('date')
-                                || inp.type === 'text') {{
+                        if ((inp.name || inp.id || '').toLowerCase().includes('date') || inp.type === 'text') {{
                             inp.value = '{today_ist}';
                             inp.dispatchEvent(new Event('change', {{bubbles:true}}));
                             inp.dispatchEvent(new Event('input',  {{bubbles:true}}));
@@ -366,7 +301,6 @@ async def run_automation():
             """)
             await page.wait_for_timeout(1000)
 
-            # Click Search
             await target_frame.evaluate("""
                 () => {
                     const btn = document.querySelector('a[onclick*="fnLoadSerach"]');
@@ -375,48 +309,37 @@ async def run_automation():
                     throw new Error('Search not found');
                 }
             """)
-            log.info("Search clicked.")
+            log.info("Search clicked. Waiting for grid data to load...")
 
-            await page.wait_for_load_state("networkidle", timeout=15000)
-            await page.wait_for_timeout(3000)
-
-            for _ in range(30):
-                rows = await target_frame.evaluate(
-                    "() => document.querySelectorAll('.grid-data-row').length"
-                )
-                if rows > 0:
-                    log.info(f"Grid rows found: {rows}")
+            # Resilient Wait-For-Data Loop
+            for _ in range(30): # Wait up to 30 seconds for rows to appear
+                await page.wait_for_timeout(1000)
+                row_count = await target_frame.evaluate("() => document.querySelectorAll('.grid-data-row').length")
+                if row_count > 0:
+                    log.info(f"Grid loaded! Found {row_count} rows.")
                     break
-                await page.wait_for_timeout(500)
 
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(2000) # One final buffer before extraction
             table_rows = await extract_table_data(target_frame)
 
         except Exception as e:
             log.error(f"Portal error: {e}")
         finally:
-            log.info("Closing browser in 5 seconds...")
-            await page.wait_for_timeout(5000)
+            await page.wait_for_timeout(2000)
             await browser.close()
 
     if not table_rows:
-        log.error("No data extracted from portal!")
+        log.warning("No data extracted from portal (or 0 orders for today). Skipping Sheet update.")
         return
 
-    # Update Google Sheet
     sheet_updated = update_google_sheet(table_rows)
     if sheet_updated:
-        log.info("Waiting 5 seconds for sheet to sync...")
         time.sleep(5)
-
-    # Screenshot Sheet
-    sheet_ok = await screenshot_sheet()
-
-    # Send to Telegram
-    if sheet_ok:
-        send_photo_to_telegram(ist_now)
-    else:
-        log.error("Sheet screenshot failed!")
+        sheet_ok = await screenshot_sheet()
+        if sheet_ok:
+            send_photo_to_telegram(ist_now)
+        else:
+            log.error("Sheet screenshot failed!")
 
 
 if __name__ == "__main__":
